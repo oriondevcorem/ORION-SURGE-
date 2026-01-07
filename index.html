@@ -6,16 +6,48 @@
   <meta name="theme-color" content="#22d3ee">
   <title>ORION SURGE</title>
   <link rel="manifest" href="manifest.json">
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <link rel="icon" type="image/png" href="logo.png">
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { margin: 0; padding: 0; overflow-x: hidden; }
+  </style>
 </head>
 <body>
   <div id="root"></div>
   
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@18.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+      "lucide-react": "https://esm.sh/lucide-react@0.263.1"
+    }
+  }
+  </script>
+  
   <script type="module">
-   import React, { useState, useEffect, useRef } from 'react';
-import { Zap, TrendingUp, Users, Trophy, Settings, DollarSign } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Zap, TrendingUp, Trophy, Settings, DollarSign, ShoppingCart, Crown } from 'lucide-react';
+
+// Google Apps Script Web App URL - Replace with your deployed URL
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzMyulhnanCebH8wuoRV4oZZRwB740o2dO4mMfeBx9SKBa-38-YRLO6-BPKQnywwrDM/exec';
+const SPREADSHEET_ID = '1qJNhgewpj3oW5dfJslgY0p4ZgajmZ9CGIY7kTHvAO-k';
+
+// Yoco payment (will be retrieved from script properties)
+const initiatePayment = async (amount, username) => {
+  try {
+    const response = await fetch(`${APPS_SCRIPT_URL}?action=createPayment`, {
+      method: 'POST',
+      body: JSON.stringify({ amount, username })
+    });
+    const data = await response.json();
+    if (data.checkoutUrl) window.location.href = data.checkoutUrl;
+  } catch (err) {
+    console.error('Payment error:', err);
+    alert('Payment failed. Please try again.');
+  }
+};
 
 const OrionSurge = () => {
   const [gameState, setGameState] = useState('BETTING');
@@ -34,14 +66,53 @@ const OrionSurge = () => {
   const [autoCashout2, setAutoCashout2] = useState(null);
   const [recentCrashes, setRecentCrashes] = useState([]);
   const [totalWagered, setTotalWagered] = useState(0);
+  const [totalWon, setTotalWon] = useState(0);
   const [houseProfit, setHouseProfit] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
+  const [showShop, setShowShop] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [leaderboard, setLeaderboard] = useState([]);
   const startTimeRef = useRef(null);
+  const speechSynthRef = useRef(null);
+
+  // Text-to-speech countdown
+  const speak = (text) => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.2;
+      utterance.pitch = 1.0;
+      utterance.volume = 0.8;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
 
   const generateCrashPoint = () => {
     const random = Math.random();
     const result = Math.floor((99) / (1 - random)) / 100;
     return Math.max(1.05, Math.min(100.00, result));
+  };
+
+  // Save game data to Google Sheets
+  const saveToSheets = async (data) => {
+    try {
+      await fetch(`${APPS_SCRIPT_URL}?action=saveGame`, {
+        method: 'POST',
+        body: JSON.stringify({...data, username, spreadsheetId: SPREADSHEET_ID})
+      });
+    } catch (err) {
+      console.error('Save error:', err);
+    }
+  };
+
+  // Load leaderboard
+  const loadLeaderboard = async () => {
+    try {
+      const response = await fetch(`${APPS_SCRIPT_URL}?action=getLeaderboard&spreadsheetId=${SPREADSHEET_ID}`);
+      const data = await response.json();
+      setLeaderboard(data.leaderboard || []);
+    } catch (err) {
+      console.error('Leaderboard error:', err);
+    }
   };
 
   const placeBet = (slot) => {
@@ -53,6 +124,8 @@ const OrionSurge = () => {
     setTotalWagered(prev => prev + amount);
     if (slot === 1) setActiveBet1({ amount, cashedOut: false });
     else setActiveBet2({ amount, cashedOut: false });
+    
+    saveToSheets({ action: 'bet', slot, amount, roundId });
   };
 
   const cashOut = (slot) => {
@@ -62,9 +135,12 @@ const OrionSurge = () => {
     
     const winAmount = Math.floor(bet.amount * multiplier);
     setBalance(prev => prev + winAmount);
+    setTotalWon(prev => prev + winAmount);
     
     if (slot === 1) setActiveBet1(prev => ({ ...prev, cashedOut: true, cashoutMultiplier: multiplier, winAmount }));
     else setActiveBet2(prev => ({ ...prev, cashedOut: true, cashoutMultiplier: multiplier, winAmount }));
+    
+    saveToSheets({ action: 'cashout', slot, winAmount, multiplier, roundId });
   };
 
   useEffect(() => {
@@ -84,8 +160,10 @@ const OrionSurge = () => {
             setGameState('PLAYING');
             setMultiplier(1.00);
             startTimeRef.current = Date.now();
+            speak('Go!');
             return 6;
           }
+          if (prev <= 3) speak(prev.toString());
           return prev - 1;
         });
       }, 1000);
@@ -97,10 +175,13 @@ const OrionSurge = () => {
         
         if (newMultiplier >= crashPoint || newMultiplier >= 300) {
           setGameState('CRASHED');
+          speak('Crashed!');
           let houseTake = 0;
           if (activeBet1 && !activeBet1.cashedOut) houseTake += activeBet1.amount;
           if (activeBet2 && !activeBet2.cashedOut) houseTake += activeBet2.amount;
           setHouseProfit(prev => prev + houseTake);
+          
+          saveToSheets({ action: 'crash', crashPoint, houseTake, roundId });
           
           setTimeout(() => {
             setRecentCrashes(prev => [crashPoint, ...prev.slice(0, 19)]);
@@ -118,217 +199,367 @@ const OrionSurge = () => {
     return () => clearInterval(interval);
   }, [gameState, roundId, crashPoint]);
 
+  useEffect(() => {
+    if (isLoggedIn) loadLeaderboard();
+  }, [isLoggedIn]);
+
   if (!isLoggedIn) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4">
-        <div className="bg-slate-800/50 backdrop-blur-xl border-2 border-blue-500/30 rounded-2xl p-8 max-w-md w-full">
-          <div className="text-center mb-8">
-            <Zap className="w-24 h-24 text-cyan-400 mx-auto mb-4 animate-pulse" style={{filter: 'drop-shadow(0 0 25px rgba(34,211,238,0.8))'}} />
-            <h1 className="text-4xl font-bold text-white mb-2">ORION SURGE</h1>
-            <p className="text-cyan-400 text-sm font-semibold">AI AMPLIFIES. I CREATE.</p>
-          </div>
-          <input
-            type="text"
-            placeholder="Enter Username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && username.trim() && setIsLoggedIn(true)}
-            className="w-full px-4 py-3 mb-4 bg-slate-900/50 border border-blue-500/30 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
-          />
-          <button onClick={() => username.trim() && setIsLoggedIn(true)} className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold py-3 rounded-lg">
-            START PLAYING
-          </button>
-          <p className="text-xs text-slate-400 text-center mt-4">Starting balance: 1,000 tokens 🪙</p>
-        </div>
-      </div>
+    return React.createElement('div', {className: "min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4"},
+      React.createElement('div', {className: "bg-slate-800/50 backdrop-blur-xl border-2 border-blue-500/30 rounded-2xl p-8 max-w-md w-full"},
+        React.createElement('div', {className: "text-center mb-8"},
+          React.createElement(Zap, {className: "w-24 h-24 text-cyan-400 mx-auto mb-4 animate-pulse", style: {filter: 'drop-shadow(0 0 25px rgba(34,211,238,0.8))'}}),
+          React.createElement('h1', {className: "text-4xl font-bold text-white mb-2"}, "ORION SURGE"),
+          React.createElement('p', {className: "text-cyan-400 text-sm font-semibold"}, "AI AMPLIFIES. I CREATE.")
+        ),
+        React.createElement('input', {
+          type: "text",
+          placeholder: "Enter Username",
+          value: username,
+          onChange: (e) => setUsername(e.target.value),
+          onKeyPress: (e) => e.key === 'Enter' && username.trim() && setIsLoggedIn(true),
+          className: "w-full px-4 py-3 mb-4 bg-slate-900/50 border border-blue-500/30 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+        }),
+        React.createElement('button', {
+          onClick: () => username.trim() && setIsLoggedIn(true),
+          className: "w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold py-3 rounded-lg"
+        }, "START PLAYING"),
+        React.createElement('p', {className: "text-xs text-slate-400 text-center mt-4"}, "Starting balance: 1,000 tokens 🪙")
+      )
     );
   }
 
-  const BetSlot = ({slot, betAmount, setBetAmount, activeBet, autoCashout, setAutoCashout}) => (
-    <div className="bg-slate-800/50 border border-blue-500/30 rounded-xl p-4">
-      <h3 className="text-cyan-400 font-bold mb-3 flex items-center gap-2">
-        <DollarSign className="w-4 h-4" />Bet Slot {slot}
-      </h3>
-      <div className="space-y-3">
-        <div>
-          <label className="text-xs text-slate-400 block mb-1">Bet Amount</label>
-          <input type="number" value={betAmount} onChange={(e) => setBetAmount(Math.max(40, Math.min(2000, parseInt(e.target.value) || 40)))} disabled={gameState !== 'BETTING' || activeBet} className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700 rounded text-white disabled:opacity-50" min="40" max="2000" />
-          <div className="flex gap-1 mt-2">
-            {[100, 200, 500, 1000].map(amt => (
-              <button key={amt} onClick={() => setBetAmount(amt)} disabled={gameState !== 'BETTING' || activeBet} className="flex-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs disabled:opacity-50">{amt}</button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <label className="text-xs text-slate-400 block mb-1">Auto Cashout</label>
-          <input type="number" value={autoCashout || ''} onChange={(e) => setAutoCashout(e.target.value ? parseFloat(e.target.value) : null)} placeholder="e.g., 2.50" disabled={gameState !== 'BETTING' || activeBet} className="w-full px-3 py-2 bg-slate-900/50 border border-slate-700 rounded text-white placeholder-slate-600 disabled:opacity-50" />
-        </div>
-        {!activeBet ? (
-          <button onClick={() => placeBet(slot)} disabled={gameState !== 'BETTING'} className="w-full bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 disabled:from-slate-700 disabled:to-slate-600 text-white font-bold py-3 rounded-lg">
-            {gameState === 'BETTING' ? 'PLACE BET' : 'WAIT...'}
-          </button>
-        ) : !activeBet.cashedOut && gameState === 'PLAYING' ? (
-          <button onClick={() => cashOut(slot)} className="w-full bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 text-white font-bold py-3 rounded-lg animate-pulse">
-            CASH OUT {Math.floor(activeBet.amount * multiplier)} 🪙
-          </button>
-        ) : (
-          <div className="w-full bg-slate-700 text-slate-400 font-bold py-3 rounded-lg text-center">{activeBet.cashedOut ? '✅ Cashed Out' : '⏳ Waiting...'}</div>
-        )}
-      </div>
-    </div>
-  );
+  const BetSlot = ({slot, betAmount, setBetAmount, activeBet, autoCashout, setAutoCashout}) => 
+    React.createElement('div', {className: "bg-slate-800/50 border border-blue-500/30 rounded-xl p-4"},
+      React.createElement('h3', {className: "text-cyan-400 font-bold mb-3 flex items-center gap-2"},
+        React.createElement(DollarSign, {className: "w-4 h-4"}),
+        `Bet Slot ${slot}`
+      ),
+      React.createElement('div', {className: "space-y-3"},
+        React.createElement('div', null,
+          React.createElement('label', {className: "text-xs text-slate-400 block mb-1"}, "Bet Amount"),
+          React.createElement('input', {
+            type: "number",
+            value: betAmount,
+            onChange: (e) => setBetAmount(Math.max(40, Math.min(2000, parseInt(e.target.value) || 40))),
+            disabled: gameState !== 'BETTING' || activeBet,
+            className: "w-full px-3 py-2 bg-slate-900/50 border border-slate-700 rounded text-white disabled:opacity-50",
+            min: "40",
+            max: "2000"
+          }),
+          React.createElement('div', {className: "flex gap-1 mt-2"},
+            [100, 200, 500, 1000].map(amt => 
+              React.createElement('button', {
+                key: amt,
+                onClick: () => setBetAmount(amt),
+                disabled: gameState !== 'BETTING' || activeBet,
+                className: "flex-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs disabled:opacity-50"
+              }, amt)
+            )
+          )
+        ),
+        React.createElement('div', null,
+          React.createElement('label', {className: "text-xs text-slate-400 block mb-1"}, "Auto Cashout"),
+          React.createElement('input', {
+            type: "number",
+            value: autoCashout || '',
+            onChange: (e) => setAutoCashout(e.target.value ? parseFloat(e.target.value) : null),
+            placeholder: "e.g., 2.50",
+            disabled: gameState !== 'BETTING' || activeBet,
+            className: "w-full px-3 py-2 bg-slate-900/50 border border-slate-700 rounded text-white placeholder-slate-600 disabled:opacity-50"
+          })
+        ),
+        !activeBet ? 
+          React.createElement('button', {
+            onClick: () => placeBet(slot),
+            disabled: gameState !== 'BETTING',
+            className: "w-full bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 disabled:from-slate-700 disabled:to-slate-600 text-white font-bold py-3 rounded-lg"
+          }, gameState === 'BETTING' ? 'PLACE BET' : 'WAIT...')
+        : !activeBet.cashedOut && gameState === 'PLAYING' ?
+          React.createElement('button', {
+            onClick: () => cashOut(slot),
+            className: "w-full bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 text-white font-bold py-3 rounded-lg animate-pulse"
+          }, `CASH OUT ${Math.floor(activeBet.amount * multiplier)} 🪙`)
+        :
+          React.createElement('div', {className: "w-full bg-slate-700 text-slate-400 font-bold py-3 rounded-lg text-center"},
+            activeBet.cashedOut ? '✅ Cashed Out' : '⏳ Waiting...'
+          )
+      )
+    );
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 text-white pb-16">
-      <div className="bg-slate-900/80 border-b border-blue-500/30 px-4 py-3">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Zap className="w-8 h-8 text-cyan-400" />
-            <div>
-              <h1 className="text-xl font-bold">ORION SURGE</h1>
-              <p className="text-xs text-slate-400">Round #{roundId}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-6">
-            <div className="text-right">
-              <p className="text-xs text-slate-400">Balance</p>
-              <p className="text-lg font-bold text-yellow-400">{balance.toFixed(2)} 🪙</p>
-            </div>
-            <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-slate-800 rounded-lg"><Settings className="w-5 h-5" /></button>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-slate-800/30 px-4 py-2 border-b border-slate-700/50">
-        <div className="max-w-7xl mx-auto flex items-center gap-2 overflow-x-auto">
-          <TrendingUp className="w-4 h-4 text-slate-400" />
-          <div className="flex gap-2">
-            {recentCrashes.length === 0 ? <span className="text-xs text-slate-500">No history yet...</span> : 
-              recentCrashes.map((crash, idx) => (
-                <span key={idx} className={`text-xs font-bold px-2 py-1 rounded ${crash < 2 ? 'bg-red-500/20 text-red-400' : crash < 10 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-green-500/20 text-green-400'}`}>
-                  {crash.toFixed(2)}x
-                </span>
-              ))
-            }
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 space-y-4">
-          <div className="bg-slate-800/50 border-2 border-blue-500/30 rounded-2xl p-6 relative min-h-[500px] flex flex-col items-center justify-center">
-            {gameState === 'BETTING' && (
-              <div className="text-center">
-                <Zap className="w-32 h-32 text-cyan-400 mx-auto mb-6 animate-pulse" style={{filter: 'drop-shadow(0 0 30px rgba(34,211,238,0.8))'}} />
-                <h2 className="text-5xl font-bold text-cyan-400 mb-4 animate-pulse">PLACE YOUR BETS</h2>
-                <div className="text-8xl font-bold text-yellow-400">{countdown}</div>
-                <p className="text-slate-400 mt-4">Next round starting...</p>
-              </div>
-            )}
-            {(gameState === 'PLAYING' || gameState === 'CRASHED') && (
-              <div className="text-center">
-                <Zap className={`w-48 h-48 mx-auto mb-8 ${gameState === 'CRASHED' ? 'text-red-500 animate-ping' : 'text-cyan-400'}`} style={{filter: `drop-shadow(0 0 ${Math.min(multiplier * 5, 50)}px rgba(34,211,238,0.8))`, transform: `scale(${Math.min(1 + (multiplier - 1) * 0.1, 2)})`}} />
-                <div className={`text-9xl font-bold mb-4 ${gameState === 'CRASHED' ? 'text-red-500' : 'text-yellow-400'}`} style={{textShadow: `0 0 ${Math.min(multiplier * 3, 40)}px currentColor`}}>{multiplier.toFixed(2)}x</div>
-                {gameState === 'CRASHED' && <div className="text-3xl font-bold text-red-400 animate-pulse">💥 CRASHED! 💥</div>}
-                <div className="mt-8 space-y-2">
-                  {activeBet1 && (
-                    <div className={`px-6 py-3 rounded-lg ${activeBet1.cashedOut ? 'bg-green-500/20 border border-green-500' : 'bg-blue-500/20 border border-blue-500'}`}>
-                      <p className={`${activeBet1.cashedOut ? 'text-green-400' : 'text-white'} font-bold`}>
-                        {activeBet1.cashedOut ? `Slot 1: Cashed out ${activeBet1.winAmount} at ${activeBet1.cashoutMultiplier.toFixed(2)}x! 🎉` : `Slot 1: ${activeBet1.amount} → ${Math.floor(activeBet1.amount * multiplier)} tokens`}
-                      </p>
-                    </div>
-                  )}
-                  {activeBet2 && (
-                    <div className={`px-6 py-3 rounded-lg ${activeBet2.cashedOut ? 'bg-green-500/20 border border-green-500' : 'bg-blue-500/20 border border-blue-500'}`}>
-                      <p className={`${activeBet2.cashedOut ? 'text-green-400' : 'text-white'} font-bold`}>
-                        {activeBet2.cashedOut ? `Slot 2: Cashed out ${activeBet2.winAmount} at ${activeBet2.cashoutMultiplier.toFixed(2)}x! 🎉` : `Slot 2: ${activeBet2.amount} → ${Math.floor(activeBet2.amount * multiplier)} tokens`}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            {gameState === 'CRASHED' && (
-              <div className="absolute top-4 right-4 bg-red-500/20 border border-red-500 rounded-lg px-4 py-2">
-                <p className="text-red-400 font-bold">Crashed at {crashPoint?.toFixed(2)}x</p>
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <BetSlot slot={1} betAmount={betAmount1} setBetAmount={setBetAmount1} activeBet={activeBet1} autoCashout={autoCashout1} setAutoCashout={setAutoCashout1} />
-            <BetSlot slot={2} betAmount={betAmount2} setBetAmount={setBetAmount2} activeBet={activeBet2} autoCashout={autoCashout2} setAutoCashout={setAutoCashout2} />
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div className="bg-slate-800/50 border border-blue-500/30 rounded-xl p-4">
-            <h3 className="text-cyan-400 font-bold mb-3 flex items-center gap-2"><Trophy className="w-4 h-4" />Your Stats</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-slate-400">Username:</span><span className="font-bold">{username}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Balance:</span><span className="font-bold text-yellow-400">{balance.toFixed(2)} 🪙</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Wagered:</span><span className="font-bold">{totalWagered.toFixed(2)} 🪙</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Rounds:</span><span className="font-bold">{roundId - 1}</span></div>
-            </div>
-          </div>
-
-          <div className="bg-slate-800/50 border border-red-500/30 rounded-xl p-4">
-            <h3 className="text-red-400 font-bold mb-3 flex items-center gap-2"><DollarSign className="w-4 h-4" />House</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-slate-400">Profit:</span><span className="font-bold text-red-400">{houseProfit.toFixed(2)} 🪙</span></div>
-            </div>
-          </div>
-
-          <div className="bg-slate-800/50 border border-blue-500/30 rounded-xl p-4">
-            <h3 className="text-cyan-400 font-bold mb-3">⚡ Rules</h3>
-            <div className="space-y-1 text-xs text-slate-400">
-              <p>• Min: 40, Max: 2,000 tokens</p>
-              <p>• Crash: 1.05x - 100x</p>
-              <p>• 6 sec betting phase</p>
-              <p>• Two betting slots</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {showSettings && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-800 border-2 border-cyan-500/50 rounded-2xl p-6 max-w-md w-full">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-cyan-400">Settings</h2>
-              <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-white">✕</button>
-            </div>
-            <div className="space-y-4">
-              <div className="pt-4 border-t border-slate-700">
-                <h3 className="text-cyan-400 font-bold mb-2">Contact</h3>
-                <p className="text-sm text-slate-400">graham@oriondevcore.com<br />+27 72 497 1810<br />www.oriondevcore.com</p>
-              </div>
-              <button onClick={() => { if (window.confirm('Logout?')) { setIsLoggedIn(false); setUsername(''); setBalance(1000); setActiveBet1(null); setActiveBet2(null); setRecentCrashes([]); setTotalWagered(0); setHouseProfit(0); setRoundId(1); }}} className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded-lg">Logout</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="fixed bottom-0 left-0 right-0 bg-slate-900/90 border-t border-blue-500/30 px-4 py-2">
-        <div className="max-w-7xl mx-auto flex items-center justify-between text-xs text-slate-400">
-          <div><span className="text-cyan-400 font-bold">ORION SURGE</span> • Token-based gaming</div>
-          <div>⚡ ORION DEV CORE</div>
-        </div>
-      </div>
-    </div>
+  return React.createElement('div', {className: "min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 text-white pb-16"},
+    React.createElement('div', {className: "bg-slate-900/80 border-b border-blue-500/30 px-4 py-3"},
+      React.createElement('div', {className: "max-w-7xl mx-auto flex items-center justify-between"},
+        React.createElement('div', {className: "flex items-center gap-3"},
+          React.createElement(Zap, {className: "w-8 h-8 text-cyan-400"}),
+          React.createElement('div', null,
+            React.createElement('h1', {className: "text-xl font-bold"}, "ORION SURGE"),
+            React.createElement('p', {className: "text-xs text-slate-400"}, `Round #${roundId}`)
+          )
+        ),
+        React.createElement('div', {className: "flex items-center gap-4"},
+          React.createElement('div', {className: "text-right"},
+            React.createElement('p', {className: "text-xs text-slate-400"}, "Balance"),
+            React.createElement('p', {className: "text-lg font-bold text-yellow-400"}, `${balance.toFixed(2)} 🪙`)
+          ),
+          React.createElement('button', {
+            onClick: () => setShowShop(true),
+            className: "p-2 hover:bg-slate-800 rounded-lg"
+          }, React.createElement(ShoppingCart, {className: "w-5 h-5 text-green-400"})),
+          React.createElement('button', {
+            onClick: () => setShowLeaderboard(true),
+            className: "p-2 hover:bg-slate-800 rounded-lg"
+          }, React.createElement(Crown, {className: "w-5 h-5 text-yellow-400"})),
+          React.createElement('button', {
+            onClick: () => setShowSettings(!showSettings),
+            className: "p-2 hover:bg-slate-800 rounded-lg"
+          }, React.createElement(Settings, {className: "w-5 h-5"}))
+        )
+      )
+    ),
+    React.createElement('div', {className: "bg-slate-800/30 px-4 py-2 border-b border-slate-700/50"},
+      React.createElement('div', {className: "max-w-7xl mx-auto flex items-center gap-2 overflow-x-auto"},
+        React.createElement(TrendingUp, {className: "w-4 h-4 text-slate-400"}),
+        React.createElement('div', {className: "flex gap-2"},
+          recentCrashes.length === 0 ? 
+            React.createElement('span', {className: "text-xs text-slate-500"}, "No history yet...")
+          : recentCrashes.map((crash, idx) =>
+            React.createElement('span', {
+              key: idx,
+              className: `text-xs font-bold px-2 py-1 rounded ${crash < 2 ? 'bg-red-500/20 text-red-400' : crash < 10 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-green-500/20 text-green-400'}`
+            }, `${crash.toFixed(2)}x`)
+          )
+        )
+      )
+    ),
+    React.createElement('div', {className: "max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-4"},
+      React.createElement('div', {className: "lg:col-span-2 space-y-4"},
+        React.createElement('div', {className: "bg-slate-800/50 border-2 border-blue-500/30 rounded-2xl p-6 relative min-h-[500px] flex flex-col items-center justify-center"},
+          gameState === 'BETTING' && React.createElement('div', {className: "text-center"},
+            React.createElement(Zap, {className: "w-32 h-32 text-cyan-400 mx-auto mb-6 animate-pulse", style: {filter: 'drop-shadow(0 0 30px rgba(34,211,238,0.8))'}}),
+            React.createElement('h2', {className: "text-5xl font-bold text-cyan-400 mb-4 animate-pulse"}, "PLACE YOUR BETS"),
+            React.createElement('div', {className: "text-8xl font-bold text-yellow-400"}, countdown),
+            React.createElement('p', {className: "text-slate-400 mt-4"}, "Next round starting...")
+          ),
+          (gameState === 'PLAYING' || gameState === 'CRASHED') && React.createElement('div', {className: "text-center"},
+            React.createElement(Zap, {
+              className: `w-48 h-48 mx-auto mb-8 ${gameState === 'CRASHED' ? 'text-red-500 animate-ping' : 'text-cyan-400'}`,
+              style: {filter: `drop-shadow(0 0 ${Math.min(multiplier * 5, 50)}px rgba(34,211,238,0.8))`, transform: `scale(${Math.min(1 + (multiplier - 1) * 0.1, 2)})`}
+            }),
+            React.createElement('div', {
+              className: `text-9xl font-bold mb-4 ${gameState === 'CRASHED' ? 'text-red-500' : 'text-yellow-400'}`,
+              style: {textShadow: `0 0 ${Math.min(multiplier * 3, 40)}px currentColor`}
+            }, `${multiplier.toFixed(2)}x`),
+            gameState === 'CRASHED' && React.createElement('div', {className: "text-3xl font-bold text-red-400 animate-pulse"}, "💥 CRASHED! 💥"),
+            React.createElement('div', {className: "mt-8 space-y-2"},
+              activeBet1 && React.createElement('div', {className: `px-6 py-3 rounded-lg ${activeBet1.cashedOut ? 'bg-green-500/20 border border-green-500' : 'bg-blue-500/20 border border-blue-500'}`},
+                React.createElement('p', {className: `${activeBet1.cashedOut ? 'text-green-400' : 'text-white'} font-bold`},
+                  activeBet1.cashedOut ? `Slot 1: Cashed out ${activeBet1.winAmount} at ${activeBet1.cashoutMultiplier.toFixed(2)}x! 🎉` : `Slot 1: ${activeBet1.amount} → ${Math.floor(activeBet1.amount * multiplier)} tokens`
+                )
+              ),
+              activeBet2 && React.createElement('div', {className: `px-6 py-3 rounded-lg ${activeBet2.cashedOut ? 'bg-green-500/20 border border-green-500' : 'bg-blue-500/20 border border-blue-500'}`},
+                React.createElement('p', {className: `${activeBet2.cashedOut ? 'text-green-400' : 'text-white'} font-bold`},
+                  activeBet2.cashedOut ? `Slot 2: Cashed out ${activeBet2.winAmount} at ${activeBet2.cashoutMultiplier.toFixed(2)}x! 🎉` : `Slot 2: ${activeBet2.amount} → ${Math.floor(activeBet2.amount * multiplier)} tokens`
+                )
+              )
+            )
+          ),
+          gameState === 'CRASHED' && React.createElement('div', {className: "absolute top-4 right-4 bg-red-500/20 border border-red-500 rounded-lg px-4 py-2"},
+            React.createElement('p', {className: "text-red-400 font-bold"}, `Crashed at ${crashPoint?.toFixed(2)}x`)
+          )
+        ),
+        React.createElement('div', {className: "grid grid-cols-1 md:grid-cols-2 gap-4"},
+          React.createElement(BetSlot, {slot: 1, betAmount: betAmount1, setBetAmount: setBetAmount1, activeBet: activeBet1, autoCashout: autoCashout1, setAutoCashout: setAutoCashout1}),
+          React.createElement(BetSlot, {slot: 2, betAmount: betAmount2, setBetAmount: setBetAmount2, activeBet: activeBet2, autoCashout: autoCashout2, setAutoCashout: setAutoCashout2})
+        )
+      ),
+      React.createElement('div', {className: "space-y-4"},
+        React.createElement('div', {className: "bg-slate-800/50 border border-blue-500/30 rounded-xl p-4"},
+          React.createElement('h3', {className: "text-cyan-400 font-bold mb-3 flex items-center gap-2"},
+            React.createElement(Trophy, {className: "w-4 h-4"}),
+            "Your Stats"
+          ),
+          React.createElement('div', {className: "space-y-2 text-sm"},
+            React.createElement('div', {className: "flex justify-between"},
+              React.createElement('span', {className: "text-slate-400"}, "Username:"),
+              React.createElement('span', {className: "font-bold"}, username)
+            ),
+            React.createElement('div', {className: "flex justify-between"},
+              React.createElement('span', {className: "text-slate-400"}, "Balance:"),
+              React.createElement('span', {className: "font-bold text-yellow-400"}, `${balance.toFixed(2)} 🪙`)
+            ),
+            React.createElement('div', {className: "flex justify-between"},
+              React.createElement('span', {className: "text-slate-400"}, "Wagered:"),
+              React.createElement('span', {className: "font-bold"}, `${totalWagered.toFixed(2)} 🪙`)
+            ),
+            React.createElement('div', {className: "flex justify-between"},
+              React.createElement('span', {className: "text-slate-400"}, "Won:"),
+              React.createElement('span', {className: "font-bold text-green-400"}, `${totalWon.toFixed(2)} 🪙`)
+            ),
+            React.createElement('div', {className: "flex justify-between"},
+              React.createElement('span', {className: "text-slate-400"}, "Rounds:"),
+              React.createElement('span', {className: "font-bold"}, roundId - 1)
+            )
+          )
+        ),
+        React.createElement('div', {className: "bg-slate-800/50 border border-red-500/30 rounded-xl p-4"},
+          React.createElement('h3', {className: "text-red-400 font-bold mb-3 flex items-center gap-2"},
+            React.createElement(DollarSign, {className: "w-4 h-4"}),
+            "House"
+          ),
+          React.createElement('div', {className: "space-y-2 text-sm"},
+            React.createElement('div', {className: "flex justify-between"},
+              React.createElement('span', {className: "text-slate-400"}, "Profit:"),
+              React.createElement('span', {className: "font-bold text-red-400"}, `${houseProfit.toFixed(2)} 🪙`)
+            )
+          )
+        ),
+        React.createElement('div', {className: "bg-slate-800/50 border border-blue-500/30 rounded-xl p-4"},
+          React.createElement('h3', {className: "text-cyan-400 font-bold mb-3"}, "⚡ Rules"),
+          React.createElement('div', {className: "space-y-1 text-xs text-slate-400"},
+            React.createElement('p', null, "• Min: 40, Max: 2,000 tokens"),
+            React.createElement('p', null, "• Crash: 1.05x - 100x"),
+            React.createElement('p', null, "• 6 sec betting phase"),
+            React.createElement('p', null, "• Two betting slots")
+          )
+        )
+      )
+    ),
+    
+    showShop && React.createElement('div', {className: "fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50", onClick: () => setShowShop(false)},
+      React.createElement('div', {className: "bg-slate-800 border-2 border-green-500/50 rounded-2xl p-6 max-w-md w-full", onClick: (e) => e.stopPropagation()},
+        React.createElement('div', {className: "flex items-center justify-between mb-6"},
+          React.createElement('h2', {className: "text-2xl font-bold text-green-400 flex items-center gap-2"},
+            React.createElement(ShoppingCart, {className: "w-6 h-6"}),
+            "Token Shop"
+          ),
+          React.createElement('button', {onClick: () => setShowShop(false), className: "text-slate-400 hover:text-white"}, "✕")
+        ),
+        React.createElement('div', {className: "space-y-3"},
+          [
+            {tokens: 1000, price: 50, popular: false},
+            {tokens: 2500, price: 100, popular: true},
+            {tokens: 5000, price: 180, popular: false},
+            {tokens: 10000, price: 300, popular: false}
+          ].map(pkg => 
+            React.createElement('button', {
+              key: pkg.tokens,
+              onClick: () => initiatePayment(pkg.price, username),
+              className: `w-full p-4 rounded-lg border-2 transition-all ${pkg.popular ? 'border-yellow-500 bg-yellow-500/10' : 'border-slate-600 hover:border-green-500 bg-slate-700/50'}`
+            },
+              pkg.popular && React.createElement('div', {className: "text-xs text-yellow-400 font-bold mb-1"}, "🔥 MOST POPULAR"),
+              React.createElement('div', {className: "flex items-center justify-between"},
+                React.createElement('div', null,
+                  React.createElement('p', {className: "text-2xl font-bold text-white"}, `${pkg.tokens.toLocaleString()} 🪙`),
+                  React.createElement('p', {className: "text-xs text-slate-400"}, `R${pkg.price.toFixed(2)}`)
+                ),
+                React.createElement('div', {className: "text-green-400 font-bold"}, "BUY")
+              )
+            )
+          )
+        ),
+        React.createElement('p', {className: "text-xs text-slate-500 text-center mt-4"}, "Secure payment via Yoco")
+      )
+    ),
+    
+    showLeaderboard && React.createElement('div', {className: "fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50", onClick: () => setShowLeaderboard(false)},
+      React.createElement('div', {className: "bg-slate-800 border-2 border-yellow-500/50 rounded-2xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto", onClick: (e) => e.stopPropagation()},
+        React.createElement('div', {className: "flex items-center justify-between mb-6"},
+          React.createElement('h2', {className: "text-2xl font-bold text-yellow-400 flex items-center gap-2"},
+            React.createElement(Crown, {className: "w-6 h-6"}),
+            "Leaderboard"
+          ),
+          React.createElement('button', {onClick: () => setShowLeaderboard(false), className: "text-slate-400 hover:text-white"}, "✕")
+        ),
+        React.createElement('div', {className: "space-y-2"},
+          leaderboard.length === 0 ? 
+            React.createElement('p', {className: "text-center text-slate-400 py-8"}, "No players yet. Be the first!")
+          : leaderboard.map((player, idx) =>
+            React.createElement('div', {
+              key: idx,
+              className: `p-4 rounded-lg flex items-center justify-between ${idx === 0 ? 'bg-yellow-500/20 border-2 border-yellow-500' : idx === 1 ? 'bg-slate-600/50 border border-slate-500' : idx === 2 ? 'bg-orange-900/30 border border-orange-700' : 'bg-slate-700/50'}`
+            },
+              React.createElement('div', {className: "flex items-center gap-3"},
+                React.createElement('span', {className: `text-2xl font-bold ${idx === 0 ? 'text-yellow-400' : idx === 1 ? 'text-slate-300' : idx === 2 ? 'text-orange-500' : 'text-slate-400'}`},
+                  idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`
+                ),
+                React.createElement('div', null,
+                  React.createElement('p', {className: `font-bold ${player.username === username ? 'text-cyan-400' : 'text-white'}`}, player.username),
+                  React.createElement('p', {className: "text-xs text-slate-400"}, `${player.wins} wins • ${player.totalWon?.toFixed(0)} won`)
+                )
+              ),
+              React.createElement('div', {className: "text-right"},
+                React.createElement('p', {className: "text-lg font-bold text-yellow-400"}, `${player.balance?.toFixed(0)} 🪙`),
+                React.createElement('p', {className: "text-xs text-slate-400"}, `${player.rounds} rounds`)
+              )
+            )
+          )
+        ),
+        React.createElement('button', {
+          onClick: loadLeaderboard,
+          className: "w-full mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded-lg"
+        }, "🔄 Refresh")
+      )
+    ),
+    
+    showSettings && React.createElement('div', {className: "fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"},
+      React.createElement('div', {className: "bg-slate-800 border-2 border-cyan-500/50 rounded-2xl p-6 max-w-md w-full"},
+        React.createElement('div', {className: "flex items-center justify-between mb-6"},
+          React.createElement('h2', {className: "text-2xl font-bold text-cyan-400"}, "Settings"),
+          React.createElement('button', {onClick: () => setShowSettings(false), className: "text-slate-400 hover:text-white"}, "✕")
+        ),
+        React.createElement('div', {className: "space-y-4"},
+          React.createElement('div', {className: "pt-4 border-t border-slate-700"},
+            React.createElement('h3', {className: "text-cyan-400 font-bold mb-2"}, "Voice Countdown"),
+            React.createElement('p', {className: "text-sm text-slate-400 mb-2"}, "Countdown announcements are enabled automatically"),
+            React.createElement('button', {
+              onClick: () => speak("Test countdown voice"),
+              className: "w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg text-sm"
+            }, "🔊 Test Voice")
+          ),
+          React.createElement('div', {className: "pt-4 border-t border-slate-700"},
+            React.createElement('h3', {className: "text-cyan-400 font-bold mb-2"}, "Contact"),
+            React.createElement('p', {className: "text-sm text-slate-400"},
+              "graham@oriondevcore.com",
+              React.createElement('br'),
+              "+27 72 497 1810",
+              React.createElement('br'),
+              "www.oriondevcore.com"
+            )
+          ),
+          React.createElement('button', {
+            onClick: () => {
+              if (window.confirm('Logout?')) {
+                setIsLoggedIn(false);
+                setUsername('');
+                setBalance(1000);
+                setActiveBet1(null);
+                setActiveBet2(null);
+                setRecentCrashes([]);
+                setTotalWagered(0);
+                setTotalWon(0);
+                setHouseProfit(0);
+                setRoundId(1);
+              }
+            },
+            className: "w-full bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded-lg"
+          }, "Logout")
+        )
+      )
+    ),
+    React.createElement('div', {className: "fixed bottom-0 left-0 right-0 bg-slate-900/90 border-t border-blue-500/30 px-4 py-2"},
+      React.createElement('div', {className: "max-w-7xl mx-auto flex items-center justify-between text-xs text-slate-400"},
+        React.createElement('div', null,
+          React.createElement('span', {className: "text-cyan-400 font-bold"}, "ORION SURGE"),
+          " • Token-based gaming"
+        ),
+        React.createElement('div', null, "⚡ ORION DEV CORE")
+      )
+    )
   );
 };
 
-export default OrionSurge;
-  </script>
-  
-  <script>
-    // Register service worker
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js')
-        .then(reg => console.log('SW registered:', reg))
-        .catch(err => console.log('SW registration failed:', err));
-    }
+const root = createRoot(document.getElementById('root'));
+root.render(React.createElement(OrionSurge));
   </script>
 </body>
 </html>
