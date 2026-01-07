@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#06b6d4">
+    <meta name="description" content="Orion Surge - High Speed Crypto Crash Game">
+    <title>ORION SURGE</title>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    
+    <!-- React & Tailwind -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lucide-react@latest"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { 
+            font-family: 'Rajdhani', sans-serif; 
+            background-color: #09090b; 
+            color: white; 
+            overscroll-behavior: none;
+        }
+        .font-brand { font-family: 'Orbitron', sans-serif; }
+        .neon-text { text-shadow: 0 0 10px rgba(34, 211, 238, 0.5); }
+        .neon-box { box-shadow: 0 0 15px rgba(34, 211, 238, 0.2); }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: #18181b; }
+        ::-webkit-scrollbar-thumb { background: #0e7490; border-radius: 5px; }
+        
+        /* Animation Classes */
+        @keyframes pulse-cyan {
+            0%, 100% { box-shadow: 0 0 15px rgba(6, 182, 212, 0.5); }
+            50% { box-shadow: 0 0 25px rgba(6, 182, 212, 0.8); }
+        }
+        .animate-glow { animation: pulse-cyan 2s infinite; }
+        
+        canvas { touch-action: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+        // --- CONFIGURATION ---
+        // 🚨 YOUR CONNECTED APP URL IS BELOW:
+        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzTal0AkR_WcimTVWCiQrfgiTMlK4SPTQn6usSwexLbpxeUvuGKiIvTIyqMbpK7zd4W/exec'; 
+
+        const { useState, useEffect, useRef, useMemo } = React;
+        const { Zap, Trophy, History, User, Coins, LogOut, Gift, Activity } = lucide;
+
+        // --- COMPONENTS ---
+
+        // 1. LOGIN SCREEN
+        const LoginScreen = ({ onLogin, loading }) => {
+            const [username, setUsername] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (username.length > 2) onLogin(username);
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[url('https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2072&auto=format&fit=crop')] bg-cover bg-center">
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
+                    <div className="relative z-10 w-full max-w-md bg-zinc-900/90 border border-cyan-500/30 p-8 rounded-2xl neon-box">
+                        <div className="flex justify-center mb-6">
+                            <Zap size={64} className="text-cyan-400 animate-pulse" />
+                        </div>
+                        <h1 className="text-4xl font-brand font-black text-center text-white mb-2 tracking-wider">ORION <span className="text-cyan-400">SURGE</span></h1>
+                        <p className="text-center text-zinc-400 mb-8">High Velocity Crypto Simulation</p>
+                        
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-cyan-500 text-sm font-bold mb-2">OPERATOR ID</label>
+                                <input 
+                                    type="text" 
+                                    value={username}
+                                    onChange={(e) => setUsername(e.target.value)}
+                                    className="w-full bg-black border-2 border-zinc-700 focus:border-cyan-500 rounded-lg p-4 text-white font-bold text-lg outline-none transition-colors"
+                                    placeholder="Enter Username"
+                                    disabled={loading}
+                                />
+                            </div>
+                            <button 
+                                type="submit" 
+                                disabled={loading || username.length < 3}
+                                className={`w-full py-4 rounded-lg font-brand font-bold text-lg tracking-widest transition-all ${loading ? 'bg-zinc-700 cursor-not-allowed' : 'bg-cyan-500 hover:bg-cyan-400 text-black animate-glow'}`}
+                            >
+                                {loading ? 'CONNECTING...' : 'INITIATE SYSTEM'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        // 2. GAME COMPONENT
+        const Game = ({ user, onLogout, refreshUser }) => {
+            const canvasRef = useRef(null);
+            
+            // Game State
+            const [gameState, setGameState] = useState('IDLE'); // IDLE, BETTING, FLYING, CRASHED, CASHED_OUT
+            const [multiplier, setMultiplier] = useState(1.00);
+            const [betAmount, setBetAmount] = useState(100);
+            const [balance, setBalance] = useState(user.balance);
+            const [activeTab, setActiveTab] = useState('game'); // game, stats, rewards
+            const [leaderboard, setLeaderboard] = useState([]);
+            const [rewards, setRewards] = useState([]);
+            const [history, setHistory] = useState([]);
+            
+            // Animation Refs
+            const requestRef = useRef();
+            const startTimeRef = useRef();
+            const crashPointRef = useRef(0);
+            
+            // --- GAME LOGIC ---
+            
+            // 1. Start Game
+            const placeBet = () => {
+                if (balance < betAmount) {
+                    alert("Insufficient Funds!");
+                    return;
+                }
+                
+                // Deduct balance locally immediately
+                setBalance(prev => prev - betAmount);
+                setGameState('FLYING');
+                setMultiplier(1.00);
+                
+                // Determine crash point (Simple client-side logic for demo purposes)
+                // In a real money app, this comes from server hash
+                const r = Math.random();
+                // 3% chance of instant crash (1.00x)
+                // Curve: Multiplier = 0.99 / (1-r)
+                let crash = 0.99 / (1 - r);
+                if (r < 0.03) crash = 1.00;
+                crashPointRef.current = Math.min(crash, 1000); // Cap at 1000x
+                
+                // Start Animation
+                startTimeRef.current = Date.now();
+                requestRef.current = requestAnimationFrame(animateGame);
+            };
+
+            // 2. Animation Loop
+            const animateGame = () => {
+                const now = Date.now();
+                const elapsed = (now - startTimeRef.current) / 1000; // seconds
+                
+                // Exponential growth formula: M = e^(0.06 * t)
+                // This makes it slow at start, faster later
+                const currentM = Math.pow(Math.E, 0.15 * elapsed);
+                
+                if (currentM >= crashPointRef.current) {
+                    crashGame(crashPointRef.current);
+                } else {
+                    setMultiplier(currentM);
+                    drawCanvas(currentM, 'flying');
+                    requestRef.current = requestAnimationFrame(animateGame);
+                }
+            };
+
+            // 3. Cash Out
+            const cashOut = () => {
+                if (gameState !== 'FLYING') return;
+                
+                cancelAnimationFrame(requestRef.current);
+                const winAmount = Math.floor(betAmount * multiplier);
+                const newBalance = balance + winAmount; // Balance was already deducted
+                
+                setBalance(newBalance);
+                setGameState('CASHED_OUT');
+                drawCanvas(multiplier, 'success');
+                
+                // Add to local history
+                setHistory(prev => [{m: multiplier, result: 'win'}, ...prev.slice(0, 9)]);
+                
+                // Sync with Server
+                sendRoundResult(newBalance, 'win', multiplier);
+            };
+
+            // 4. Crash Logic
+            const crashGame = (finalValue) => {
+                cancelAnimationFrame(requestRef.current);
+                setMultiplier(finalValue);
+                setGameState('CRASHED');
+                drawCanvas(finalValue, 'crash');
+                
+                // Add to local history
+                setHistory(prev => [{m: finalValue, result: 'loss'}, ...prev.slice(0, 9)]);
+                
+                // Sync with Server (sending loss)
+                sendRoundResult(balance, 'loss', finalValue);
+            };
+
+            // 5. Server Sync
+            const sendRoundResult = async (currentBal, result, finalM) => {
+                try {
+                    // Optimistic update already happened. We just notify server.
+                    await fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'no-cors', // standard for GAS
+                        body: JSON.stringify({
+                            action: 'record_round',
+                            userId: user.userId,
+                            betAmount: betAmount,
+                            cashOutMultiplier: finalM,
+                            result: result,
+                            crashPoint: crashPointRef.current
+                        })
+                    });
+                    // Note: with no-cors we can't read response, but we trust it works.
+                    // Periodically we should fetch full user data to re-sync.
+                } catch (e) {
+                    console.error("Sync failed", e);
+                }
+            };
+
+            // --- CANVAS DRAWING ---
+            const drawCanvas = (currentM, state) => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext('2d');
+                const w = canvas.width;
+                const h = canvas.height;
+                
+                // Clear
+                ctx.clearRect(0, 0, w, h);
+                
+                // Background Grid
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                for(let i=0; i<w; i+=50) { ctx.moveTo(i,0); ctx.lineTo(i,h); }
+                for(let i=0; i<h; i+=50) { ctx.moveTo(0,i); ctx.lineTo(w,i); }
+                ctx.stroke();
+
+                // Rocket Path
+                // Map Time (X) and Multiplier (Y)
+                // This is a simplified visual representation
+                let x = (currentM - 1) * 50; 
+                let y = h - ((currentM - 1) * 30 + 20);
+                
+                if (x > w - 50) x = w - 50; // Clamp visually
+                if (y < 50) y = 50;
+
+                // Line
+                ctx.beginPath();
+                ctx.moveTo(0, h);
+                // Curving bezier for effect
+                ctx.quadraticCurveTo(x/2, h, x, y);
+                
+                if (state === 'crash') {
+                    ctx.strokeStyle = '#ef4444'; // Red
+                    ctx.shadowColor = '#ef4444';
+                } else if (state === 'success') {
+                    ctx.strokeStyle = '#22c55e'; // Green
+                    ctx.shadowColor = '#22c55e';
+                } else {
+                    ctx.strokeStyle = '#22d3ee'; // Cyan
+                    ctx.shadowColor = '#22d3ee';
+                }
+                
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.shadowBlur = 15;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Rocket/Dot
+                ctx.beginPath();
+                ctx.arc(x, y, 8, 0, Math.PI*2);
+                ctx.fillStyle = state === 'crash' ? '#ef4444' : '#fff';
+                ctx.fill();
+                
+                // Text overlay if crashed
+                if (state === 'crash') {
+                    ctx.fillStyle = '#ef4444';
+                    ctx.font = 'bold 40px Orbitron';
+                    ctx.textAlign = 'center';
+                    ctx.fillText("CRASHED", w/2, h/2);
+                    ctx.font = 'bold 20px Rajdhani';
+                    ctx.fillText(`@ ${currentM.toFixed(2)}x`, w/2, h/2 + 30);
+                }
+            };
+
+            // Init Canvas
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                if (canvas) {
+                    canvas.width = canvas.offsetWidth;
+                    canvas.height = canvas.offsetHeight;
+                    drawCanvas(1.00, 'idle');
+                }
+            }, [activeTab]);
+            
+            // Load Data
+            useEffect(() => {
+                if(activeTab === 'stats') {
+                    fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({ action: 'get_leaderboard' })
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if(data.success) setLeaderboard(data.leaderboard);
+                    });
+                }
+                // Mock rewards for now or fetch if implemented in backend
+                setRewards([
+                    {id: 1, title: '10% Service Discount', cost: 5000, desc: 'Discount on next invoice'},
+                    {id: 2, title: 'Free Consultation', cost: 10000, desc: '30 min tech strategy call'},
+                    {id: 3, title: 'Coffee Voucher', cost: 2000, desc: 'R50 Voucher'}
+                ]);
+            }, [activeTab]);
+
+
+            // --- RENDER HELPERS ---
+            
+            const renderGame = () => (
+                <div className="flex flex-col h-full">
+                    {/* Graph Area */}
+                    <div className="relative flex-1 bg-zinc-900/50 rounded-xl mb-4 border border-zinc-800 overflow-hidden">
+                        <canvas ref={canvasRef} className="w-full h-full absolute inset-0"></canvas>
+                        
+                        {/* Overlay Multiplier */}
+                        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
+                            <div className={`text-6xl md:text-8xl font-black font-brand tracking-tighter ${gameState === 'CRASHED' ? 'text-red-500' : gameState === 'CASHED_OUT' ? 'text-green-500' : 'text-white'}`}>
+                                {multiplier.toFixed(2)}x
+                            </div>
+                            <div className="text-cyan-400 font-bold tracking-widest mt-2 animate-pulse">
+                                {gameState === 'FLYING' ? 'LIFT OFF' : gameState === 'IDLE' ? 'READY' : ''}
+                            </div>
+                        </div>
+
+                        {/* Recent History */}
+                        <div className="absolute top-4 right-4 flex gap-2">
+                            {history.map((h, i) => (
+                                <div key={i} className={`px-2 py-1 rounded text-xs font-bold ${h.result === 'win' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                    {h.m.toFixed(2)}x
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-xl">
+                        <div className="flex gap-4 mb-4">
+                            <div className="flex-1">
+                                <label className="text-xs text-zinc-500 font-bold mb-1 block">BET AMOUNT</label>
+                                <div className="relative">
+                                    <input 
+                                        type="number" 
+                                        value={betAmount} 
+                                        onChange={(e) => setBetAmount(parseInt(e.target.value) || 0)}
+                                        className="w-full bg-black border border-zinc-700 rounded p-3 text-white font-bold"
+                                        disabled={gameState === 'FLYING'}
+                                    />
+                                    <div className="absolute right-2 top-2 flex gap-1">
+                                        <button onClick={() => setBetAmount(Math.floor(balance/2))} className="bg-zinc-800 px-2 py-1 text-xs rounded hover:bg-zinc-700">1/2</button>
+                                        <button onClick={() => setBetAmount(balance)} className="bg-zinc-800 px-2 py-1 text-xs rounded hover:bg-zinc-700">MAX</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex-1">
+                                <label className="text-xs text-zinc-500 font-bold mb-1 block">TARGET (AUTO)</label>
+                                <input type="text" placeholder="Disabled" disabled className="w-full bg-black/50 border border-zinc-800 rounded p-3 text-zinc-500 font-bold cursor-not-allowed" />
+                            </div>
+                        </div>
+
+                        {gameState === 'FLYING' ? (
+                            <button 
+                                onClick={cashOut}
+                                className="w-full bg-green-500 hover:bg-green-400 text-black font-brand font-black text-2xl py-6 rounded-lg shadow-[0_0_20px_rgba(34,197,94,0.4)] transform active:scale-95 transition-all"
+                            >
+                                CASH OUT ({(betAmount * multiplier).toFixed(0)})
+                            </button>
+                        ) : (
+                            <button 
+                                onClick={placeBet}
+                                disabled={balance < betAmount || gameState === 'FLYING'}
+                                className={`w-full font-brand font-black text-2xl py-6 rounded-lg transition-all transform active:scale-95 ${
+                                    gameState === 'CRASHED' ? 'bg-red-500 text-white' : 
+                                    'bg-cyan-500 hover:bg-cyan-400 text-black shadow-[0_0_20px_rgba(6,182,212,0.4)]'
+                                }`}
+                            >
+                                {gameState === 'CRASHED' ? 'RETRY' : 'PLACE BET'}
+                            </button>
+                        )}
+                    </div>
+                </div>
+            );
+
+            const renderStats = () => (
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 h-full overflow-y-auto">
+                    <h2 className="text-xl font-brand font-bold text-cyan-400 mb-4 flex items-center gap-2">
+                        <Trophy size={20} /> LEADERBOARD
+                    </h2>
+                    <table className="w-full text-left">
+                        <thead>
+                            <tr className="border-b border-zinc-800 text-zinc-500 text-sm">
+                                <th className="pb-2">RANK</th>
+                                <th className="pb-2">OPERATOR</th>
+                                <th className="pb-2 text-right">TOKENS</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {leaderboard.length === 0 ? (
+                                <tr><td colSpan="3" className="text-center py-8 text-zinc-600">Loading...</td></tr>
+                            ) : leaderboard.map((l, idx) => (
+                                <tr key={idx} className="border-b border-zinc-800/50">
+                                    <td className="py-3 font-bold text-zinc-400">#{idx+1}</td>
+                                    <td className="py-3 text-white">{l.username}</td>
+                                    <td className="py-3 text-right font-mono text-cyan-400">{l.balance.toLocaleString()}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+            
+            const renderRewards = () => (
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 h-full overflow-y-auto">
+                    <h2 className="text-xl font-brand font-bold text-purple-400 mb-4 flex items-center gap-2">
+                        <Gift size={20} /> REWARDS CATALOG
+                    </h2>
+                    <div className="grid gap-4">
+                        {rewards.map(r => (
+                            <div key={r.id} className="bg-black/40 border border-zinc-700 p-4 rounded-lg flex justify-between items-center">
+                                <div>
+                                    <h3 className="font-bold text-white">{r.title}</h3>
+                                    <p className="text-xs text-zinc-400">{r.desc}</p>
+                                </div>
+                                <button className="bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded text-xs font-bold transition-colors">
+                                    {r.cost.toLocaleString()} PTS
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+
+            return (
+                <div className="h-screen flex flex-col max-w-lg mx-auto bg-black shadow-2xl overflow-hidden">
+                    {/* Header */}
+                    <div className="p-4 bg-zinc-900 border-b border-zinc-800 flex justify-between items-center z-10">
+                        <div className="flex items-center gap-2">
+                            <Zap className="text-cyan-400" size={24} />
+                            <span className="font-brand font-bold text-xl tracking-wider">ORION</span>
+                        </div>
+                        <div className="bg-black/50 px-4 py-1 rounded-full border border-cyan-500/30 flex items-center gap-2">
+                            <Coins size={14} className="text-yellow-400" />
+                            <span className="font-mono font-bold text-cyan-400 text-lg">{balance.toLocaleString()}</span>
+                        </div>
+                    </div>
+
+                    {/* Main Content */}
+                    <div className="flex-1 p-4 overflow-hidden">
+                        {activeTab === 'game' && renderGame()}
+                        {activeTab === 'stats' && renderStats()}
+                        {activeTab === 'rewards' && renderRewards()}
+                    </div>
+
+                    {/* Navigation */}
+                    <div className="bg-zinc-950 border-t border-zinc-800 p-2 flex justify-around safe-area-bottom">
+                        <button onClick={() => setActiveTab('game')} className={`p-3 rounded-lg flex flex-col items-center gap-1 ${activeTab === 'game' ? 'text-cyan-400' : 'text-zinc-600'}`}>
+                            <Activity size={24} />
+                            <span className="text-[10px] font-bold">GAME</span>
+                        </button>
+                        <button onClick={() => setActiveTab('stats')} className={`p-3 rounded-lg flex flex-col items-center gap-1 ${activeTab === 'stats' ? 'text-cyan-400' : 'text-zinc-600'}`}>
+                            <Trophy size={24} />
+                            <span className="text-[10px] font-bold">RANK</span>
+                        </button>
+                        <button onClick={() => setActiveTab('rewards')} className={`p-3 rounded-lg flex flex-col items-center gap-1 ${activeTab === 'rewards' ? 'text-purple-400' : 'text-zinc-600'}`}>
+                            <Gift size={24} />
+                            <span className="text-[10px] font-bold">LOOT</span>
+                        </button>
+                        <button onClick={onLogout} className="p-3 rounded-lg flex flex-col items-center gap-1 text-zinc-600 hover:text-red-400">
+                            <LogOut size={24} />
+                            <span className="text-[10px] font-bold">EXIT</span>
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // 3. MAIN APP
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(false);
+
+            // Check LocalStorage for session
+            useEffect(() => {
+                const saved = localStorage.getItem('orion_user');
+                if(saved) setUser(JSON.parse(saved));
+            }, []);
+
+            const handleLogin = async (username) => {
+                setLoading(true);
+                try {
+                    // Call Google Apps Script
+                    const res = await fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({ action: 'login', username: username })
+                    });
+                    const data = await res.json();
+                    
+                    if (data.success) {
+                        setUser(data.user);
+                        localStorage.setItem('orion_user', JSON.stringify(data.user));
+                    } else {
+                        alert("Connection Failed. Check URL.");
+                    }
+                } catch (e) {
+                    console.error(e);
+                    // Fallback for demo if URL is invalid
+                    alert("Network Error: Ensure Script URL is correct in index.html. Starting Demo Mode.");
+                    const demoUser = { userId: 'DEMO', username: username, balance: 1000 };
+                    setUser(demoUser);
+                }
+                setLoading(false);
+            };
+
+            const handleLogout = () => {
+                setUser(null);
+                localStorage.removeItem('orion_user');
+            };
+
+            return (
+                <React.StrictMode>
+                    {user ? <Game user={user} onLogout={handleLogout} /> : <LoginScreen onLogin={handleLogin} loading={loading} />}
+                </React.StrictMode>
+            );
+        };
+
+        // Mount
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+
+    <!-- Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('SW Registered'))
+                    .catch(err => console.log('SW Fail', err));
+            });
+        }
+    </script>
+</body>
+</html>
+
+
